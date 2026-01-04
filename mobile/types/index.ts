@@ -99,6 +99,7 @@ export interface Habit {
     completionRate: number;
   };
   isActive: boolean;
+  isArchived: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -126,6 +127,24 @@ export interface WeeklyGoal {
   description: string;
   isCompleted: boolean;
   completedAt?: string;
+}
+
+// Input types for creating goals (different from response types)
+export interface CreateStrategicGoalInput {
+  title: string;
+  description: string;
+  category: GoalCategory;
+  priority: number;
+  measurement: {
+    targetValue: number;
+    unit: string;
+  };
+}
+
+export interface CreateWeeklyGoalInput {
+  strategicGoalId: string;
+  weekNumber: number;
+  description: string;
 }
 
 export interface TwelveWeekPlan {

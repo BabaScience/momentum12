@@ -18,6 +18,7 @@ import {
   useGetActivePlanQuery,
   useGetPlanProgressQuery,
   useDeletePlanMutation,
+  useUpdatePlanMutation,
   useAddStrategicGoalMutation,
   useUpdateStrategicGoalMutation,
   useDeleteStrategicGoalMutation,
@@ -311,22 +312,30 @@ const AddWeeklyGoalModal = ({
   onSubmit,
   isLoading,
   weekNumber,
+  strategicGoals,
 }: {
   visible: boolean;
   onClose: () => void;
-  onSubmit: (description: string) => void;
+  onSubmit: (description: string, strategicGoalId?: string) => void;
   isLoading: boolean;
   weekNumber: number;
+  strategicGoals: StrategicGoal[];
 }) => {
   const [description, setDescription] = useState('');
+  const [selectedGoalId, setSelectedGoalId] = useState<string>('');
 
   const handleSubmit = () => {
     if (!description.trim()) {
       Alert.alert('Error', 'Description is required');
       return;
     }
-    onSubmit(description.trim());
+    if (!selectedGoalId && strategicGoals.length === 0) {
+      Alert.alert('Error', 'Please add a strategic goal first');
+      return;
+    }
+    onSubmit(description.trim(), selectedGoalId || strategicGoals[0]?._id);
     setDescription('');
+    setSelectedGoalId('');
   };
 
   return (
@@ -334,6 +343,33 @@ const AddWeeklyGoalModal = ({
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <Text style={styles.modalTitle}>Add Week {weekNumber} Goal</Text>
+
+          {strategicGoals.length > 0 && (
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Link to Strategic Goal</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.goalSelector}>
+                  {strategicGoals.map((goal) => (
+                    <TouchableOpacity
+                      key={goal._id}
+                      style={[
+                        styles.goalSelectorItem,
+                        (selectedGoalId === goal._id || (!selectedGoalId && strategicGoals[0]?._id === goal._id)) && styles.goalSelectorItemActive,
+                      ]}
+                      onPress={() => setSelectedGoalId(goal._id)}
+                    >
+                      <Text style={[
+                        styles.goalSelectorText,
+                        (selectedGoalId === goal._id || (!selectedGoalId && strategicGoals[0]?._id === goal._id)) && styles.goalSelectorTextActive,
+                      ]} numberOfLines={1}>
+                        {goal.title}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+            </View>
+          )}
 
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Goal Description</Text>
@@ -392,6 +428,7 @@ export default function PlanScreen() {
 
   // Mutations
   const [deletePlan, { isLoading: isDeletingPlan }] = useDeletePlanMutation();
+  const [updatePlan] = useUpdatePlanMutation();
   const [addStrategicGoal, { isLoading: isAddingStrategicGoal }] = useAddStrategicGoalMutation();
   const [updateStrategicGoal] = useUpdateStrategicGoalMutation();
   const [deleteStrategicGoal] = useDeleteStrategicGoalMutation();
@@ -433,24 +470,70 @@ export default function PlanScreen() {
     );
   };
 
+  const handleCompletePlan = () => {
+    Alert.alert(
+      'Complete Plan',
+      'Mark this plan as completed? You will be able to create a new plan afterwards.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Complete',
+          onPress: async () => {
+            try {
+              await updatePlan({ id: plan!._id, data: { status: 'completed' } }).unwrap();
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              Alert.alert('Plan Completed', 'Congratulations! You can now create a new plan.');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to complete plan');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleAbandonPlan = () => {
+    Alert.alert(
+      'Abandon Plan',
+      'Are you sure you want to abandon this plan? Your progress will be saved but the plan will be marked as abandoned.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Abandon',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await updatePlan({ id: plan!._id, data: { status: 'abandoned' } }).unwrap();
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (error) {
+              Alert.alert('Error', 'Failed to abandon plan');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleAddStrategicGoal = async (goal: { title: string; category: string; targetValue: number; unit: string }) => {
     try {
       await addStrategicGoal({
         planId: plan!._id,
         goal: {
           title: goal.title,
+          description: goal.title, // Use title as description
           category: goal.category as any,
-          targetMetric: {
-            name: goal.title,
-            target: goal.targetValue,
+          priority: (plan?.strategicGoals?.length || 0) + 1, // Auto-increment priority
+          measurement: {
+            targetValue: goal.targetValue,
             unit: goal.unit,
           },
         },
       }).unwrap();
       setShowAddStrategicGoal(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to add goal');
+      refetch(); // Refresh the plan data
+    } catch (error: any) {
+      Alert.alert('Error', error?.data?.message || 'Failed to add goal');
     }
   };
 
@@ -463,19 +546,28 @@ export default function PlanScreen() {
     }
   };
 
-  const handleAddWeeklyGoal = async (description: string) => {
+  const handleAddWeeklyGoal = async (description: string, strategicGoalId?: string) => {
     try {
+      // Use the first strategic goal if none specified
+      const goalId = strategicGoalId || plan?.strategicGoals?.[0]?._id;
+      if (!goalId) {
+        Alert.alert('Error', 'Please add a strategic goal first');
+        return;
+      }
+      
       await addWeeklyGoal({
         planId: plan!._id,
         goal: {
+          strategicGoalId: goalId,
           weekNumber: selectedWeek,
-          title: description,
+          description: description,
         },
       }).unwrap();
       setShowAddWeeklyGoal(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to add weekly goal');
+      refetch(); // Refresh the plan data
+    } catch (error: any) {
+      Alert.alert('Error', error?.data?.message || 'Failed to add weekly goal');
     }
   };
 
@@ -559,9 +651,11 @@ export default function PlanScreen() {
               onPress={() => {
                 Alert.alert(
                   'Plan Options',
-                  '',
+                  'What would you like to do with this plan?',
                   [
                     { text: 'Cancel', style: 'cancel' },
+                    { text: 'Mark as Complete', onPress: handleCompletePlan },
+                    { text: 'Abandon Plan', style: 'destructive', onPress: handleAbandonPlan },
                     { text: 'Delete Plan', style: 'destructive', onPress: handleDeletePlan },
                   ]
                 );
@@ -676,6 +770,7 @@ export default function PlanScreen() {
         onSubmit={handleAddWeeklyGoal}
         isLoading={isAddingWeeklyGoal}
         weekNumber={selectedWeek}
+        strategicGoals={plan?.strategicGoals || []}
       />
     </SafeAreaView>
   );
@@ -1100,5 +1195,27 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontSize: fontSize.base,
     fontWeight: fontWeight.semibold,
+  },
+  goalSelector: {
+    flexDirection: 'row',
+    gap: spacing[2],
+    paddingVertical: spacing[2],
+  },
+  goalSelectorItem: {
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.dark.border,
+    maxWidth: 150,
+  },
+  goalSelectorItemActive: {
+    backgroundColor: colors.primary[500],
+  },
+  goalSelectorText: {
+    fontSize: fontSize.sm,
+    color: colors.dark.text,
+  },
+  goalSelectorTextActive: {
+    color: colors.white,
   },
 });

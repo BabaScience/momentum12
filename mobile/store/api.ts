@@ -9,6 +9,8 @@ import type {
   DashboardData,
   LoginResponse,
   RegisterResponse,
+  CreateStrategicGoalInput,
+  CreateWeeklyGoalInput,
 } from '../types';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
@@ -282,7 +284,7 @@ export const apiSlice = createApi({
       providesTags: ['Plans', 'Analytics'],
     }),
     // NEW: Add strategic goal
-    addStrategicGoal: builder.mutation<ApiResponse<{ plan: TwelveWeekPlan }>, { planId: string; goal: StrategicGoal }>({
+    addStrategicGoal: builder.mutation<ApiResponse<{ plan: TwelveWeekPlan }>, { planId: string; goal: CreateStrategicGoalInput }>({
       query: ({ planId, goal }) => ({
         url: `/plans/${planId}/strategic-goals`,
         method: 'POST',
@@ -308,7 +310,7 @@ export const apiSlice = createApi({
       invalidatesTags: ['Plans'],
     }),
     // NEW: Add weekly goal
-    addWeeklyGoal: builder.mutation<ApiResponse<{ plan: TwelveWeekPlan }>, { planId: string; goal: WeeklyGoal }>({
+    addWeeklyGoal: builder.mutation<ApiResponse<{ plan: TwelveWeekPlan }>, { planId: string; goal: CreateWeeklyGoalInput }>({
       query: ({ planId, goal }) => ({
         url: `/plans/${planId}/weekly-goals`,
         method: 'POST',
