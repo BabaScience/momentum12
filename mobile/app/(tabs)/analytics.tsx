@@ -10,9 +10,16 @@ import {
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useGetDashboardQuery, useGetTrendsQuery, useGetHeatmapQuery } from '../../store/api';
+import {
+  useGetDashboardQuery,
+  useGetTrendsQuery,
+  useGetCompletionHeatmapQuery,
+  useGetHabitPerformanceQuery,
+  useGetGoalProgressQuery,
+  useGetActivePlanQuery,
+} from '../../store/api';
 import { colors, spacing, borderRadius, fontSize, fontWeight, getScoreColor } from '../../theme';
-import type { DashboardData, HabitTrend } from '../../types';
+import type { HabitTrend } from '../../types';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -58,14 +65,17 @@ const MetricCard = ({
   value,
   label,
   color,
+  subValue,
 }: {
   value: string | number;
   label: string;
   color?: string;
+  subValue?: string;
 }) => (
   <View style={styles.metricCard}>
     <Text style={[styles.metricValue, color && { color }]}>{value}</Text>
     <Text style={styles.metricLabel}>{label}</Text>
+    {subValue && <Text style={styles.metricSubValue}>{subValue}</Text>}
   </View>
 );
 
@@ -73,12 +83,16 @@ const HabitPerformanceItem = ({
   habitName,
   completionRate,
   currentStreak,
+  longestStreak,
+  totalCompletions,
   trend,
 }: {
   habitName: string;
   completionRate: number;
   currentStreak: number;
-  trend: HabitTrend;
+  longestStreak: number;
+  totalCompletions: number;
+  trend?: HabitTrend;
 }) => {
   const trendIcon = trend === 'improving' ? '↑' : trend === 'declining' ? '↓' : '→';
   const trendColor =
@@ -91,28 +105,52 @@ const HabitPerformanceItem = ({
   return (
     <View style={styles.habitPerformanceItem}>
       <View style={styles.habitPerformanceInfo}>
-        <Text style={styles.habitPerformanceName}>{habitName}</Text>
+        <View style={styles.habitPerformanceHeader}>
+          <Text style={styles.habitPerformanceName}>{habitName}</Text>
+          {trend && (
+            <Text style={[styles.habitPerformanceTrend, { color: trendColor }]}>
+              {trendIcon}
+            </Text>
+          )}
+        </View>
         <View style={styles.habitPerformanceStats}>
-          <Text style={styles.habitPerformanceRate}>{completionRate}%</Text>
-          <Text style={[styles.habitPerformanceTrend, { color: trendColor }]}>
-            {trendIcon}
+          <Text style={[styles.habitPerformanceRate, { color: getScoreColor(completionRate) }]}>
+            {completionRate}%
           </Text>
+          <Text style={styles.habitPerformanceSeparator}>•</Text>
+          <Text style={styles.habitPerformanceTotal}>{totalCompletions} total</Text>
+        </View>
+        {/* Progress bar */}
+        <View style={styles.habitProgressBar}>
+          <View
+            style={[
+              styles.habitProgressFill,
+              { width: `${completionRate}%`, backgroundColor: getScoreColor(completionRate) },
+            ]}
+          />
         </View>
       </View>
-      <View style={styles.habitStreakBadge}>
-        <Text style={styles.habitStreakIcon}>🔥</Text>
-        <Text style={styles.habitStreakValue}>{currentStreak}</Text>
+      <View style={styles.habitStreakSection}>
+        <View style={styles.habitStreakBadge}>
+          <Text style={styles.habitStreakIcon}>🔥</Text>
+          <Text style={styles.habitStreakValue}>{currentStreak}</Text>
+        </View>
+        <Text style={styles.habitBestStreak}>Best: {longestStreak}</Text>
       </View>
     </View>
   );
 };
 
-const HeatmapGrid = ({ data }: { data: { date: string; score: number; completed: boolean }[] }) => {
+const HeatmapGrid = ({
+  data,
+}: {
+  data: { date: string; completionRate: number; completedCount: number; totalCount: number }[];
+}) => {
   const cellSize = (SCREEN_WIDTH - spacing[8] - spacing[3] * 6) / 7;
 
   // Group data by weeks
-  const weeks: { date: string; score: number; completed: boolean }[][] = [];
-  let currentWeek: { date: string; score: number; completed: boolean }[] = [];
+  const weeks: typeof data[] = [];
+  let currentWeek: typeof data = [];
 
   data.forEach((day, index) => {
     currentWeek.push(day);
@@ -128,13 +166,23 @@ const HeatmapGrid = ({ data }: { data: { date: string; score: number; completed:
 
   return (
     <View style={styles.heatmapContainer}>
+      {/* Day labels */}
+      <View style={styles.heatmapDayLabels}>
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
+          <View key={i} style={[styles.heatmapDayLabel, { width: cellSize }]}>
+            <Text style={styles.heatmapDayLabelText}>{day}</Text>
+          </View>
+        ))}
+      </View>
+
       {weeks.slice(-12).map((week, weekIndex) => (
         <View key={weekIndex} style={styles.heatmapRow}>
           {week.map((day, dayIndex) => {
-            const intensity = day.score / 100;
-            const backgroundColor = day.score > 0
-              ? `rgba(16, 185, 129, ${Math.max(0.1, intensity)})`
-              : colors.dark.border;
+            const intensity = day.completionRate / 100;
+            const backgroundColor =
+              day.completionRate > 0
+                ? `rgba(16, 185, 129, ${Math.max(0.15, intensity)})`
+                : colors.dark.border;
 
             return (
               <View
@@ -147,9 +195,69 @@ const HeatmapGrid = ({ data }: { data: { date: string; score: number; completed:
                     backgroundColor,
                   },
                 ]}
-              />
+              >
+                {day.completedCount > 0 && (
+                  <Text style={styles.heatmapCellText}>
+                    {day.completedCount}
+                  </Text>
+                )}
+              </View>
             );
           })}
+        </View>
+      ))}
+    </View>
+  );
+};
+
+const GoalProgressSection = ({ planId }: { planId: string }) => {
+  const { data: goalProgressData, isLoading } = useGetGoalProgressQuery(planId);
+  const progress = goalProgressData?.data?.progress;
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingSection}>
+        <ActivityIndicator size="small" color={colors.primary[500]} />
+      </View>
+    );
+  }
+
+  if (!progress || progress.strategicGoals.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Goal Progress</Text>
+        <View style={styles.overallProgressBadge}>
+          <Text style={styles.overallProgressText}>
+            {progress.overallProgress}% Overall
+          </Text>
+        </View>
+      </View>
+      {progress.strategicGoals.map((goal) => (
+        <View key={goal.id} style={styles.goalProgressItem}>
+          <View style={styles.goalProgressHeader}>
+            <Text style={styles.goalProgressTitle} numberOfLines={1}>
+              {goal.title}
+            </Text>
+            <Text style={styles.goalProgressStats}>
+              {goal.weeklyGoalsCompleted}/{goal.weeklyGoalsTotal} goals
+            </Text>
+          </View>
+          <View style={styles.goalProgressBar}>
+            <View
+              style={[
+                styles.goalProgressFill,
+                {
+                  width: `${goal.progress}%`,
+                  backgroundColor: getScoreColor(goal.progress),
+                },
+              ]}
+            />
+          </View>
+          <Text style={styles.goalProgressPercent}>{goal.progress}%</Text>
         </View>
       ))}
     </View>
@@ -160,19 +268,41 @@ export default function AnalyticsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [timeRange, setTimeRange] = useState('month');
 
-  const { data: dashboardData, isLoading: dashboardLoading, refetch: refetchDashboard } = useGetDashboardQuery();
+  const {
+    data: dashboardData,
+    isLoading: dashboardLoading,
+    refetch: refetchDashboard,
+  } = useGetDashboardQuery();
+
   const { data: trendsData, refetch: refetchTrends } = useGetTrendsQuery(timeRange);
-  const { data: heatmapData, refetch: refetchHeatmap } = useGetHeatmapQuery(90);
+
+  // Use the new enhanced heatmap endpoint
+  const { data: heatmapData, refetch: refetchHeatmap } = useGetCompletionHeatmapQuery({});
+
+  // Use the new habit performance endpoint
+  const { data: performanceData, refetch: refetchPerformance } = useGetHabitPerformanceQuery({
+    range: timeRange === 'week' ? '7d' : timeRange === 'month' ? '30d' : '84d',
+  });
+
+  // Get active plan for goal progress
+  const { data: planData } = useGetActivePlanQuery();
+  const activePlan = planData?.data?.plan;
 
   const dashboard = dashboardData?.data?.dashboard;
   const trends = trendsData?.data?.trends;
   const heatmap = heatmapData?.data?.heatmap || [];
+  const habitPerformance = performanceData?.data?.performance || [];
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([refetchDashboard(), refetchTrends(), refetchHeatmap()]);
+    await Promise.all([
+      refetchDashboard(),
+      refetchTrends(),
+      refetchHeatmap(),
+      refetchPerformance(),
+    ]);
     setRefreshing(false);
-  }, [refetchDashboard, refetchTrends, refetchHeatmap]);
+  }, [refetchDashboard, refetchTrends, refetchHeatmap, refetchPerformance]);
 
   if (dashboardLoading) {
     return (
@@ -217,6 +347,7 @@ export default function AnalyticsScreen() {
             value={dashboard?.streakData?.currentStreak || 0}
             label="Current Streak"
             color={colors.warning[500]}
+            subValue={`Best: ${dashboard?.streakData?.longestStreak || 0}`}
           />
           <MetricCard
             value={trends?.totalDaysTracked || 0}
@@ -229,47 +360,59 @@ export default function AnalyticsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Activity Heatmap</Text>
           <View style={styles.heatmapCard}>
-            <HeatmapGrid data={heatmap} />
-            <View style={styles.heatmapLegend}>
-              <Text style={styles.heatmapLegendText}>Less</Text>
-              <View style={styles.heatmapLegendColors}>
-                {[0.1, 0.3, 0.5, 0.7, 0.9].map((opacity, index) => (
-                  <View
-                    key={index}
-                    style={[
-                      styles.heatmapLegendCell,
-                      { backgroundColor: `rgba(16, 185, 129, ${opacity})` },
-                    ]}
-                  />
-                ))}
+            {heatmap.length > 0 ? (
+              <>
+                <HeatmapGrid data={heatmap} />
+                <View style={styles.heatmapLegend}>
+                  <Text style={styles.heatmapLegendText}>Less</Text>
+                  <View style={styles.heatmapLegendColors}>
+                    {[0.15, 0.35, 0.55, 0.75, 0.95].map((opacity, index) => (
+                      <View
+                        key={index}
+                        style={[
+                          styles.heatmapLegendCell,
+                          { backgroundColor: `rgba(16, 185, 129, ${opacity})` },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <Text style={styles.heatmapLegendText}>More</Text>
+                </View>
+              </>
+            ) : (
+              <View style={styles.emptySection}>
+                <Text style={styles.emptySectionText}>No activity data yet</Text>
               </View>
-              <Text style={styles.heatmapLegendText}>More</Text>
-            </View>
+            )}
           </View>
         </View>
 
         {/* Habit Performance */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Habit Performance</Text>
-          {dashboard?.habitPerformance?.length === 0 ? (
+          {habitPerformance.length === 0 ? (
             <View style={styles.emptySection}>
               <Text style={styles.emptySectionText}>No habit data yet</Text>
             </View>
           ) : (
-            dashboard?.habitPerformance?.map((habit) => (
+            habitPerformance.map((habit) => (
               <HabitPerformanceItem
                 key={habit.habitId}
                 habitName={habit.habitName}
                 completionRate={habit.completionRate}
                 currentStreak={habit.currentStreak}
-                trend={habit.trend}
+                longestStreak={habit.longestStreak}
+                totalCompletions={habit.totalCompletions}
               />
             ))
           )}
         </View>
 
-        {/* Goal Progress */}
-        {dashboard?.goalProgress && dashboard.goalProgress.length > 0 && (
+        {/* Goal Progress (if active plan exists) */}
+        {activePlan && <GoalProgressSection planId={activePlan._id} />}
+
+        {/* Dashboard Goal Progress (fallback) */}
+        {!activePlan && dashboard?.goalProgress && dashboard.goalProgress.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Goal Progress</Text>
             {dashboard.goalProgress.map((goal) => (
@@ -279,7 +422,11 @@ export default function AnalyticsScreen() {
                   <View
                     style={[
                       styles.trackBadge,
-                      { backgroundColor: goal.isOnTrack ? colors.success[500] + '20' : colors.danger[500] + '20' },
+                      {
+                        backgroundColor: goal.isOnTrack
+                          ? colors.success[500] + '20'
+                          : colors.danger[500] + '20',
+                      },
                     ]}
                   >
                     <Text
@@ -298,7 +445,9 @@ export default function AnalyticsScreen() {
                       styles.goalProgressFill,
                       {
                         width: `${goal.progressPercentage}%`,
-                        backgroundColor: goal.isOnTrack ? colors.success[500] : colors.danger[500],
+                        backgroundColor: goal.isOnTrack
+                          ? colors.success[500]
+                          : colors.danger[500],
                       },
                     ]}
                   />
@@ -321,6 +470,10 @@ const styles = StyleSheet.create({
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingSection: {
+    padding: spacing[6],
     alignItems: 'center',
   },
   scrollView: {
@@ -386,14 +539,36 @@ const styles = StyleSheet.create({
     color: colors.dark.textSecondary,
     marginTop: spacing[1],
   },
+  metricSubValue: {
+    fontSize: fontSize.xs,
+    color: colors.dark.textMuted,
+    marginTop: spacing[1],
+  },
   section: {
     marginBottom: spacing[6],
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing[3],
   },
   sectionTitle: {
     fontSize: fontSize.lg,
     fontWeight: fontWeight.semibold,
     color: colors.dark.text,
     marginBottom: spacing[3],
+  },
+  overallProgressBadge: {
+    backgroundColor: colors.primary[500] + '20',
+    paddingHorizontal: spacing[2],
+    paddingVertical: spacing[1],
+    borderRadius: borderRadius.md,
+  },
+  overallProgressText: {
+    fontSize: fontSize.xs,
+    color: colors.primary[400],
+    fontWeight: fontWeight.medium,
   },
   heatmapCard: {
     backgroundColor: colors.dark.surface,
@@ -405,12 +580,30 @@ const styles = StyleSheet.create({
   heatmapContainer: {
     gap: spacing[1],
   },
+  heatmapDayLabels: {
+    flexDirection: 'row',
+    marginBottom: spacing[1],
+  },
+  heatmapDayLabel: {
+    alignItems: 'center',
+  },
+  heatmapDayLabelText: {
+    fontSize: fontSize.xs,
+    color: colors.dark.textMuted,
+  },
   heatmapRow: {
     flexDirection: 'row',
     gap: spacing[1],
   },
   heatmapCell: {
     borderRadius: borderRadius.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  heatmapCellText: {
+    fontSize: 8,
+    color: colors.white,
+    fontWeight: fontWeight.bold,
   },
   heatmapLegend: {
     flexDirection: 'row',
@@ -445,11 +638,18 @@ const styles = StyleSheet.create({
   },
   habitPerformanceInfo: {
     flex: 1,
+    marginRight: spacing[3],
+  },
+  habitPerformanceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   habitPerformanceName: {
     fontSize: fontSize.base,
     fontWeight: fontWeight.medium,
     color: colors.dark.text,
+    flex: 1,
   },
   habitPerformanceStats: {
     flexDirection: 'row',
@@ -459,11 +659,32 @@ const styles = StyleSheet.create({
   },
   habitPerformanceRate: {
     fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+  },
+  habitPerformanceSeparator: {
+    color: colors.dark.textMuted,
+  },
+  habitPerformanceTotal: {
+    fontSize: fontSize.sm,
     color: colors.dark.textSecondary,
   },
   habitPerformanceTrend: {
     fontSize: fontSize.sm,
     fontWeight: fontWeight.bold,
+  },
+  habitProgressBar: {
+    height: 4,
+    backgroundColor: colors.dark.border,
+    borderRadius: borderRadius.full,
+    marginTop: spacing[2],
+    overflow: 'hidden',
+  },
+  habitProgressFill: {
+    height: '100%',
+    borderRadius: borderRadius.full,
+  },
+  habitStreakSection: {
+    alignItems: 'center',
   },
   habitStreakBadge: {
     flexDirection: 'row',
@@ -481,6 +702,11 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     fontWeight: fontWeight.bold,
     color: colors.warning[500],
+  },
+  habitBestStreak: {
+    fontSize: fontSize.xs,
+    color: colors.dark.textMuted,
+    marginTop: spacing[1],
   },
   emptySection: {
     backgroundColor: colors.dark.surface,
@@ -513,6 +739,11 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.medium,
     color: colors.dark.text,
     flex: 1,
+    marginRight: spacing[2],
+  },
+  goalProgressStats: {
+    fontSize: fontSize.xs,
+    color: colors.dark.textSecondary,
   },
   trackBadge: {
     paddingHorizontal: spacing[2],
@@ -540,4 +771,3 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 });
-

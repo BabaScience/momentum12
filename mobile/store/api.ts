@@ -56,12 +56,102 @@ const baseQueryWithReauth = async (args: any, api: any, extraOptions: any) => {
   return result;
 };
 
+// Types for new endpoints
+interface StrategicGoal {
+  id?: string;
+  title: string;
+  description?: string;
+  category: 'health' | 'career' | 'relationships' | 'personal' | 'financial' | 'other';
+  targetMetric?: {
+    name: string;
+    target: number;
+    unit: string;
+  };
+}
+
+interface WeeklyGoal {
+  id?: string;
+  weekNumber: number;
+  title: string;
+  strategicGoalId?: string;
+  isCompleted?: boolean;
+}
+
+interface HabitHistoryEntry {
+  date: string;
+  completed: boolean;
+  timeSpent?: number;
+  notes?: string;
+}
+
+interface CompletionHeatmapData {
+  date: string;
+  completionRate: number;
+  completedCount: number;
+  totalCount: number;
+}
+
+interface HabitPerformanceData {
+  habitId: string;
+  habitName: string;
+  completionRate: number;
+  currentStreak: number;
+  longestStreak: number;
+  totalCompletions: number;
+}
+
+interface GoalProgressData {
+  strategicGoals: {
+    id: string;
+    title: string;
+    progress: number;
+    weeklyGoalsCompleted: number;
+    weeklyGoalsTotal: number;
+  }[];
+  overallProgress: number;
+}
+
+interface UserStatistics {
+  totalHabitsCompleted: number;
+  totalPlansCreated: number;
+  totalReflections: number;
+  currentStreak: number;
+  longestStreak: number;
+  averageCompletionRate: number;
+  memberSince: string;
+}
+
+interface PlanProgress {
+  currentWeek: number;
+  totalWeeks: number;
+  weeklyProgress: {
+    weekNumber: number;
+    completionRate: number;
+    goalsCompleted: number;
+    goalsTotal: number;
+  }[];
+  strategicGoalProgress: {
+    goalId: string;
+    title: string;
+    progress: number;
+  }[];
+  overallCompletionRate: number;
+}
+
+interface DailyAction {
+  title: string;
+  description?: string;
+  habitId?: string;
+  priority?: 'low' | 'medium' | 'high';
+  estimatedMinutes?: number;
+}
+
 export const apiSlice = createApi({
   reducerPath: 'api',
   baseQuery: baseQueryWithReauth,
   tagTypes: ['User', 'Plans', 'Habits', 'Executions', 'Analytics'],
   endpoints: (builder) => ({
-    // Auth
+    // ==================== AUTH ====================
     login: builder.mutation<ApiResponse<LoginResponse>, { email: string; password: string }>({
       query: (credentials) => ({
         url: '/auth/login',
@@ -84,8 +174,38 @@ export const apiSlice = createApi({
       }),
       invalidatesTags: ['User', 'Plans', 'Habits', 'Executions', 'Analytics'],
     }),
+    // NEW: Forgot password
+    forgotPassword: builder.mutation<ApiResponse<{ message: string }>, { email: string }>({
+      query: (data) => ({
+        url: '/auth/forgot-password',
+        method: 'POST',
+        body: data,
+      }),
+    }),
+    // NEW: Change password
+    changePassword: builder.mutation<ApiResponse<{ message: string }>, { currentPassword: string; newPassword: string }>({
+      query: (data) => ({
+        url: '/auth/change-password',
+        method: 'POST',
+        body: data,
+      }),
+    }),
+    // NEW: Delete account
+    deleteAccount: builder.mutation<ApiResponse<{ message: string }>, { password: string }>({
+      query: (data) => ({
+        url: '/auth/account',
+        method: 'DELETE',
+        body: data,
+      }),
+      invalidatesTags: ['User', 'Plans', 'Habits', 'Executions', 'Analytics'],
+    }),
+    // NEW: Get current user
+    getCurrentUser: builder.query<ApiResponse<{ user: User }>, void>({
+      query: () => '/auth/me',
+      providesTags: ['User'],
+    }),
 
-    // User
+    // ==================== USER ====================
     getProfile: builder.query<ApiResponse<{ user: User }>, void>({
       query: () => '/users/profile',
       providesTags: ['User'],
@@ -106,8 +226,13 @@ export const apiSlice = createApi({
       }),
       invalidatesTags: ['User'],
     }),
+    // NEW: Get user statistics
+    getUserStatistics: builder.query<ApiResponse<{ statistics: UserStatistics }>, void>({
+      query: () => '/users/statistics',
+      providesTags: ['User', 'Analytics'],
+    }),
 
-    // Plans
+    // ==================== PLANS ====================
     getPlans: builder.query<ApiResponse<{ plans: TwelveWeekPlan[] }>, void>({
       query: () => '/plans',
       providesTags: ['Plans'],
@@ -143,8 +268,65 @@ export const apiSlice = createApi({
       }),
       invalidatesTags: ['Plans'],
     }),
+    // NEW: Delete plan
+    deletePlan: builder.mutation<ApiResponse<{ message: string }>, string>({
+      query: (id) => ({
+        url: `/plans/${id}`,
+        method: 'DELETE',
+      }),
+      invalidatesTags: ['Plans'],
+    }),
+    // NEW: Get plan progress
+    getPlanProgress: builder.query<ApiResponse<{ progress: PlanProgress }>, string>({
+      query: (planId) => `/plans/${planId}/progress`,
+      providesTags: ['Plans', 'Analytics'],
+    }),
+    // NEW: Add strategic goal
+    addStrategicGoal: builder.mutation<ApiResponse<{ plan: TwelveWeekPlan }>, { planId: string; goal: StrategicGoal }>({
+      query: ({ planId, goal }) => ({
+        url: `/plans/${planId}/strategic-goals`,
+        method: 'POST',
+        body: goal,
+      }),
+      invalidatesTags: ['Plans'],
+    }),
+    // NEW: Update strategic goal
+    updateStrategicGoal: builder.mutation<ApiResponse<{ plan: TwelveWeekPlan }>, { planId: string; goalId: string; data: Partial<StrategicGoal> }>({
+      query: ({ planId, goalId, data }) => ({
+        url: `/plans/${planId}/strategic-goals/${goalId}`,
+        method: 'PATCH',
+        body: data,
+      }),
+      invalidatesTags: ['Plans'],
+    }),
+    // NEW: Delete strategic goal
+    deleteStrategicGoal: builder.mutation<ApiResponse<{ plan: TwelveWeekPlan }>, { planId: string; goalId: string }>({
+      query: ({ planId, goalId }) => ({
+        url: `/plans/${planId}/strategic-goals/${goalId}`,
+        method: 'DELETE',
+      }),
+      invalidatesTags: ['Plans'],
+    }),
+    // NEW: Add weekly goal
+    addWeeklyGoal: builder.mutation<ApiResponse<{ plan: TwelveWeekPlan }>, { planId: string; goal: WeeklyGoal }>({
+      query: ({ planId, goal }) => ({
+        url: `/plans/${planId}/weekly-goals`,
+        method: 'POST',
+        body: goal,
+      }),
+      invalidatesTags: ['Plans'],
+    }),
+    // NEW: Update weekly goal
+    updateWeeklyGoal: builder.mutation<ApiResponse<{ plan: TwelveWeekPlan }>, { planId: string; goalId: string; data: Partial<WeeklyGoal> }>({
+      query: ({ planId, goalId, data }) => ({
+        url: `/plans/${planId}/weekly-goals/${goalId}`,
+        method: 'PATCH',
+        body: data,
+      }),
+      invalidatesTags: ['Plans'],
+    }),
 
-    // Habits
+    // ==================== HABITS ====================
     getHabits: builder.query<ApiResponse<{ habits: Habit[] }>, void>({
       query: () => '/habits',
       providesTags: ['Habits'],
@@ -184,8 +366,21 @@ export const apiSlice = createApi({
       query: (id) => `/habits/${id}/statistics`,
       providesTags: ['Habits'],
     }),
+    // NEW: Archive habit
+    archiveHabit: builder.mutation<ApiResponse<{ habit: Habit }>, string>({
+      query: (habitId) => ({
+        url: `/habits/${habitId}/archive`,
+        method: 'POST',
+      }),
+      invalidatesTags: ['Habits'],
+    }),
+    // NEW: Get habit history
+    getHabitHistory: builder.query<ApiResponse<{ history: HabitHistoryEntry[] }>, { habitId: string; days?: number }>({
+      query: ({ habitId, days = 30 }) => `/habits/${habitId}/history?days=${days}`,
+      providesTags: ['Habits', 'Executions'],
+    }),
 
-    // Executions
+    // ==================== EXECUTIONS ====================
     getTodayExecution: builder.query<ApiResponse<{ execution: DailyExecution }>, void>({
       query: () => '/executions/today',
       providesTags: ['Executions'],
@@ -224,8 +419,26 @@ export const apiSlice = createApi({
       query: (days) => `/executions/history?days=${days}`,
       providesTags: ['Executions'],
     }),
+    // NEW: Get execution by date
+    getExecutionByDate: builder.query<ApiResponse<{ execution: DailyExecution }>, string>({
+      query: (date) => `/executions/date/${date}`,
+      providesTags: ['Executions'],
+    }),
+    // NEW: Add action to execution
+    addAction: builder.mutation<ApiResponse<{ execution: DailyExecution }>, { executionId: string; action: DailyAction }>({
+      query: ({ executionId, action }) => ({
+        url: `/executions/${executionId}/actions`,
+        method: 'POST',
+        body: action,
+      }),
+      invalidatesTags: ['Executions'],
+    }),
+    getHeatmap: builder.query<ApiResponse<{ heatmap: any[] }>, number>({
+      query: (days) => `/executions/heatmap?days=${days}`,
+      providesTags: ['Executions'],
+    }),
 
-    // Analytics
+    // ==================== ANALYTICS ====================
     getDashboard: builder.query<ApiResponse<{ dashboard: DashboardData }>, void>({
       query: () => '/analytics/dashboard',
       providesTags: ['Analytics'],
@@ -238,26 +451,60 @@ export const apiSlice = createApi({
       query: (weekNumber) => `/analytics/weekly-report/${weekNumber}`,
       providesTags: ['Analytics'],
     }),
-    getHeatmap: builder.query<ApiResponse<{ heatmap: any[] }>, number>({
-      query: (days) => `/executions/heatmap?days=${days}`,
-      providesTags: ['Executions'],
+    // NEW: Get completion heatmap
+    getCompletionHeatmap: builder.query<ApiResponse<{ heatmap: CompletionHeatmapData[] }>, { startDate?: string; endDate?: string }>({
+      query: ({ startDate, endDate } = {}) => {
+        let url = '/analytics/completion-heatmap';
+        const params = new URLSearchParams();
+        if (startDate) params.append('startDate', startDate);
+        if (endDate) params.append('endDate', endDate);
+        if (params.toString()) url += `?${params.toString()}`;
+        return url;
+      },
+      providesTags: ['Analytics', 'Executions'],
+    }),
+    // NEW: Get habit performance
+    getHabitPerformance: builder.query<ApiResponse<{ performance: HabitPerformanceData[] }>, { range?: string }>({
+      query: ({ range = '30d' } = {}) => `/analytics/habit-performance?range=${range}`,
+      providesTags: ['Analytics', 'Habits'],
+    }),
+    // NEW: Get goal progress for a plan
+    getGoalProgress: builder.query<ApiResponse<{ progress: GoalProgressData }>, string>({
+      query: (planId) => `/analytics/goal-progress/${planId}`,
+      providesTags: ['Analytics', 'Plans'],
     }),
   }),
 });
 
 export const {
+  // Auth
   useLoginMutation,
   useRegisterMutation,
   useLogoutMutation,
+  useForgotPasswordMutation,
+  useChangePasswordMutation,
+  useDeleteAccountMutation,
+  useGetCurrentUserQuery,
+  // User
   useGetProfileQuery,
   useUpdateProfileMutation,
   useUpdatePreferencesMutation,
+  useGetUserStatisticsQuery,
+  // Plans
   useGetPlansQuery,
   useGetActivePlanQuery,
   useGetPlanQuery,
   useCreatePlanMutation,
   useUpdatePlanMutation,
   useActivatePlanMutation,
+  useDeletePlanMutation,
+  useGetPlanProgressQuery,
+  useAddStrategicGoalMutation,
+  useUpdateStrategicGoalMutation,
+  useDeleteStrategicGoalMutation,
+  useAddWeeklyGoalMutation,
+  useUpdateWeeklyGoalMutation,
+  // Habits
   useGetHabitsQuery,
   useGetHabitsForTodayQuery,
   useGetHabitQuery,
@@ -265,15 +512,23 @@ export const {
   useUpdateHabitMutation,
   useDeleteHabitMutation,
   useGetHabitStatisticsQuery,
+  useArchiveHabitMutation,
+  useGetHabitHistoryQuery,
+  // Executions
   useGetTodayExecutionQuery,
   useCompleteHabitMutation,
   useUncompleteHabitMutation,
   useCompleteActionMutation,
   useAddReflectionMutation,
   useGetExecutionHistoryQuery,
+  useGetExecutionByDateQuery,
+  useAddActionMutation,
+  useGetHeatmapQuery,
+  // Analytics
   useGetDashboardQuery,
   useGetTrendsQuery,
   useGetWeeklyReportQuery,
-  useGetHeatmapQuery,
+  useGetCompletionHeatmapQuery,
+  useGetHabitPerformanceQuery,
+  useGetGoalProgressQuery,
 } = apiSlice;
-

@@ -7,12 +7,21 @@ import {
   TouchableOpacity,
   Switch,
   Alert,
+  Modal,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useAppSelector, useAppDispatch } from '../../store';
-import { useLogoutMutation, useUpdatePreferencesMutation } from '../../store/api';
+import {
+  useLogoutMutation,
+  useUpdatePreferencesMutation,
+  useGetUserStatisticsQuery,
+  useChangePasswordMutation,
+  useDeleteAccountMutation,
+} from '../../store/api';
 import { logout } from '../../store/authSlice';
 import { secureStorage, appStorage } from '../../services/storage';
 import { colors, spacing, borderRadius, fontSize, fontWeight } from '../../theme';
@@ -22,11 +31,13 @@ const SettingItem = ({
   value,
   onPress,
   showArrow = true,
+  danger = false,
 }: {
   label: string;
   value?: string;
   onPress?: () => void;
   showArrow?: boolean;
+  danger?: boolean;
 }) => (
   <TouchableOpacity
     style={styles.settingItem}
@@ -34,7 +45,7 @@ const SettingItem = ({
     disabled={!onPress}
     activeOpacity={onPress ? 0.7 : 1}
   >
-    <Text style={styles.settingLabel}>{label}</Text>
+    <Text style={[styles.settingLabel, danger && styles.dangerText]}>{label}</Text>
     <View style={styles.settingRight}>
       {value && <Text style={styles.settingValue}>{value}</Text>}
       {showArrow && onPress && <Text style={styles.arrow}>›</Text>}
@@ -62,16 +73,141 @@ const ToggleSetting = ({
   </View>
 );
 
+// Change Password Modal Component
+const ChangePasswordModal = ({
+  visible,
+  onClose,
+  onSubmit,
+  isLoading,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSubmit: (currentPassword: string, newPassword: string) => void;
+  isLoading: boolean;
+}) => {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = () => {
+    setError('');
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setError('All fields are required');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError('New password must be at least 8 characters');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('New passwords do not match');
+      return;
+    }
+    onSubmit(currentPassword, newPassword);
+  };
+
+  const handleClose = () => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setError('');
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Change Password</Text>
+
+          {error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Current Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter current password"
+              placeholderTextColor={colors.gray[500]}
+              secureTextEntry
+              value={currentPassword}
+              onChangeText={setCurrentPassword}
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>New Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter new password"
+              placeholderTextColor={colors.gray[500]}
+              secureTextEntry
+              value={newPassword}
+              onChangeText={setNewPassword}
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Confirm New Password</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Confirm new password"
+              placeholderTextColor={colors.gray[500]}
+              secureTextEntry
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+            />
+          </View>
+
+          <View style={styles.modalButtons}>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.cancelButton]}
+              onPress={handleClose}
+              disabled={isLoading}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.submitButton]}
+              onPress={handleSubmit}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator size="small" color={colors.white} />
+              ) : (
+                <Text style={styles.submitButtonText}>Update</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
 export default function ProfileScreen() {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
   const [logoutMutation] = useLogoutMutation();
   const [updatePreferences] = useUpdatePreferencesMutation();
+  const [changePassword, { isLoading: isChangingPassword }] = useChangePasswordMutation();
+  const [deleteAccount, { isLoading: isDeletingAccount }] = useDeleteAccountMutation();
+
+  // Fetch real-time user statistics
+  const { data: statsData, isLoading: statsLoading } = useGetUserStatisticsQuery();
+  const statistics = statsData?.data?.statistics;
 
   const [dailyReminder, setDailyReminder] = useState(user?.preferences?.notifications?.dailyReminder ?? true);
   const [weeklyReview, setWeeklyReview] = useState(user?.preferences?.notifications?.weeklyReview ?? true);
   const [streakMilestones, setStreakMilestones] = useState(user?.preferences?.notifications?.streakMilestones ?? true);
   const [hapticFeedback, setHapticFeedback] = useState(user?.preferences?.hapticFeedback ?? true);
+
+  // Modal states
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   const handlePreferenceChange = async (
     key: string,
@@ -98,6 +234,62 @@ export default function ProfileScreen() {
       setter(!value);
       console.error('Failed to update preference:', error);
     }
+  };
+
+  const handleChangePassword = async (currentPassword: string, newPassword: string) => {
+    try {
+      await changePassword({ currentPassword, newPassword }).unwrap();
+      setShowChangePassword(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Success', 'Your password has been updated.');
+    } catch (error: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.data?.message || 'Failed to change password. Please try again.');
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'This action is permanent and cannot be undone. All your data will be deleted.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            // Second confirmation
+            Alert.prompt(
+              'Confirm Deletion',
+              'Enter your password to confirm account deletion:',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete Forever',
+                  style: 'destructive',
+                  onPress: async (password) => {
+                    if (!password) {
+                      Alert.alert('Error', 'Password is required');
+                      return;
+                    }
+                    try {
+                      await deleteAccount({ password }).unwrap();
+                      await secureStorage.clearTokens();
+                      await appStorage.clear();
+                      dispatch(logout());
+                      router.replace('/(auth)/login');
+                    } catch (error: any) {
+                      Alert.alert('Error', error.data?.message || 'Failed to delete account');
+                    }
+                  },
+                },
+              ],
+              'secure-text'
+            );
+          },
+        },
+      ]
+    );
   };
 
   const handleLogout = () => {
@@ -127,6 +319,11 @@ export default function ProfileScreen() {
     );
   };
 
+  // Use real-time stats if available, fallback to user object
+  const currentStreak = statistics?.currentStreak ?? user?.statistics?.currentStreak ?? 0;
+  const longestStreak = statistics?.longestStreak ?? user?.statistics?.longestStreak ?? 0;
+  const totalHabitsCompleted = statistics?.totalHabitsCompleted ?? user?.statistics?.totalHabitsCompleted ?? 0;
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
@@ -154,20 +351,28 @@ export default function ProfileScreen() {
 
         {/* Stats */}
         <View style={styles.statsCard}>
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{user?.statistics?.currentStreak || 0}</Text>
-            <Text style={styles.statLabel}>Current Streak</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{user?.statistics?.longestStreak || 0}</Text>
-            <Text style={styles.statLabel}>Longest Streak</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{user?.statistics?.totalHabitsCompleted || 0}</Text>
-            <Text style={styles.statLabel}>Habits Done</Text>
-          </View>
+          {statsLoading ? (
+            <View style={styles.statsLoading}>
+              <ActivityIndicator size="small" color={colors.primary[500]} />
+            </View>
+          ) : (
+            <>
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{currentStreak}</Text>
+                <Text style={styles.statLabel}>Current Streak</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{longestStreak}</Text>
+                <Text style={styles.statLabel}>Longest Streak</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{totalHabitsCompleted}</Text>
+                <Text style={styles.statLabel}>Habits Done</Text>
+              </View>
+            </>
+          )}
         </View>
 
         {/* Notifications Section */}
@@ -225,8 +430,14 @@ export default function ProfileScreen() {
           <Text style={styles.sectionTitle}>Account</Text>
           <View style={styles.sectionContent}>
             <SettingItem label="Edit Profile" onPress={() => {}} />
-            <SettingItem label="Change Password" onPress={() => {}} />
+            <SettingItem label="Change Password" onPress={() => setShowChangePassword(true)} />
             <SettingItem label="Export Data" onPress={() => {}} />
+            <SettingItem 
+              label="Delete Account" 
+              onPress={handleDeleteAccount}
+              danger
+              showArrow={false}
+            />
           </View>
         </View>
 
@@ -248,6 +459,14 @@ export default function ProfileScreen() {
         {/* Version */}
         <Text style={styles.version}>Momentum12 v1.0.0</Text>
       </ScrollView>
+
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        visible={showChangePassword}
+        onClose={() => setShowChangePassword(false)}
+        onSubmit={handleChangePassword}
+        isLoading={isChangingPassword}
+      />
     </SafeAreaView>
   );
 }
@@ -317,6 +536,12 @@ const styles = StyleSheet.create({
     marginBottom: spacing[6],
     borderWidth: 1,
     borderColor: colors.dark.border,
+    minHeight: 80,
+  },
+  statsLoading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   statItem: {
     flex: 1,
@@ -382,6 +607,9 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xl,
     color: colors.dark.textMuted,
   },
+  dangerText: {
+    color: colors.danger[500],
+  },
   logoutButton: {
     backgroundColor: colors.danger[500] + '20',
     borderRadius: borderRadius.xl,
@@ -401,5 +629,86 @@ const styles = StyleSheet.create({
     color: colors.dark.textMuted,
     textAlign: 'center',
   },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing[4],
+  },
+  modalContent: {
+    backgroundColor: colors.dark.surface,
+    borderRadius: borderRadius.xl,
+    padding: spacing[6],
+    width: '100%',
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: colors.dark.border,
+  },
+  modalTitle: {
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.bold,
+    color: colors.dark.text,
+    marginBottom: spacing[4],
+    textAlign: 'center',
+  },
+  errorBox: {
+    backgroundColor: colors.danger[500] + '20',
+    borderRadius: borderRadius.md,
+    padding: spacing[3],
+    marginBottom: spacing[4],
+    borderWidth: 1,
+    borderColor: colors.danger[500],
+  },
+  errorText: {
+    color: colors.danger[400],
+    fontSize: fontSize.sm,
+    textAlign: 'center',
+  },
+  inputGroup: {
+    marginBottom: spacing[4],
+  },
+  inputLabel: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+    color: colors.dark.text,
+    marginBottom: spacing[2],
+  },
+  input: {
+    backgroundColor: colors.dark.background,
+    borderRadius: borderRadius.lg,
+    padding: spacing[4],
+    fontSize: fontSize.base,
+    color: colors.dark.text,
+    borderWidth: 1,
+    borderColor: colors.dark.border,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: spacing[3],
+    marginTop: spacing[4],
+  },
+  modalButton: {
+    flex: 1,
+    padding: spacing[4],
+    borderRadius: borderRadius.lg,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: colors.dark.border,
+  },
+  cancelButtonText: {
+    color: colors.dark.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.medium,
+  },
+  submitButton: {
+    backgroundColor: colors.primary[500],
+  },
+  submitButtonText: {
+    color: colors.white,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
 });
-

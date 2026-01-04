@@ -9,13 +9,15 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  Modal,
+  Alert,
 } from 'react-native';
 import { Link, router } from 'expo-router';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import * as Haptics from 'expo-haptics';
-import { useLoginMutation } from '../../store/api';
+import { useLoginMutation, useForgotPasswordMutation } from '../../store/api';
 import { useAppDispatch } from '../../store';
 import { setCredentials } from '../../store/authSlice';
 import { secureStorage, appStorage } from '../../services/storage';
@@ -28,10 +30,125 @@ const loginSchema = z.object({
 
 type LoginFormData = z.infer<typeof loginSchema>;
 
+// Forgot Password Modal Component
+const ForgotPasswordModal = ({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) => {
+  const [email, setEmail] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [forgotPassword, { isLoading }] = useForgotPasswordMutation();
+
+  const handleSubmit = async () => {
+    setError('');
+    if (!email) {
+      setError('Email is required');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('Please enter a valid email');
+      return;
+    }
+
+    try {
+      await forgotPassword({ email }).unwrap();
+      setSuccess(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err: any) {
+      setError(err.data?.message || 'Failed to send reset email. Please try again.');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    }
+  };
+
+  const handleClose = () => {
+    setEmail('');
+    setError('');
+    setSuccess(false);
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          {success ? (
+            <>
+              <Text style={styles.modalIcon}>✉️</Text>
+              <Text style={styles.modalTitle}>Check Your Email</Text>
+              <Text style={styles.modalDescription}>
+                We've sent a password reset link to {email}. Please check your inbox.
+              </Text>
+              <TouchableOpacity
+                style={styles.modalButton}
+                onPress={handleClose}
+              >
+                <Text style={styles.modalButtonText}>Done</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={styles.modalTitle}>Forgot Password?</Text>
+              <Text style={styles.modalDescription}>
+                Enter your email address and we'll send you a link to reset your password.
+              </Text>
+
+              {error ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorBoxText}>{error}</Text>
+                </View>
+              ) : null}
+
+              <View style={styles.modalInputGroup}>
+                <Text style={styles.label}>Email</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="your@email.com"
+                  placeholderTextColor={colors.gray[500]}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  value={email}
+                  onChangeText={setEmail}
+                />
+              </View>
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={[styles.modalCancelButton]}
+                  onPress={handleClose}
+                  disabled={isLoading}
+                >
+                  <Text style={styles.modalCancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalSubmitButton]}
+                  onPress={handleSubmit}
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator size="small" color={colors.white} />
+                  ) : (
+                    <Text style={styles.modalSubmitButtonText}>Send Link</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
 export default function LoginScreen() {
   const dispatch = useAppDispatch();
   const [login, { isLoading }] = useLoginMutation();
   const [error, setError] = useState<string | null>(null);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
 
   const {
     control,
@@ -116,7 +233,12 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Password</Text>
+            <View style={styles.passwordHeader}>
+              <Text style={styles.label}>Password</Text>
+              <TouchableOpacity onPress={() => setShowForgotPassword(true)}>
+                <Text style={styles.forgotPasswordLink}>Forgot Password?</Text>
+              </TouchableOpacity>
+            </View>
             <Controller
               control={control}
               name="password"
@@ -160,6 +282,12 @@ export default function LoginScreen() {
           </View>
         </View>
       </ScrollView>
+
+      {/* Forgot Password Modal */}
+      <ForgotPasswordModal
+        visible={showForgotPassword}
+        onClose={() => setShowForgotPassword(false)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -214,11 +342,21 @@ const styles = StyleSheet.create({
   inputGroup: {
     marginBottom: spacing[4],
   },
+  passwordHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing[2],
+  },
   label: {
     fontSize: fontSize.sm,
     fontWeight: fontWeight.medium,
     color: colors.dark.text,
-    marginBottom: spacing[2],
+  },
+  forgotPasswordLink: {
+    fontSize: fontSize.sm,
+    color: colors.primary[400],
+    fontWeight: fontWeight.medium,
   },
   input: {
     backgroundColor: colors.dark.surface,
@@ -267,5 +405,99 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     fontWeight: fontWeight.semibold,
   },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing[4],
+  },
+  modalContent: {
+    backgroundColor: colors.dark.surface,
+    borderRadius: borderRadius.xl,
+    padding: spacing[6],
+    width: '100%',
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: colors.dark.border,
+    alignItems: 'center',
+  },
+  modalIcon: {
+    fontSize: 48,
+    marginBottom: spacing[4],
+  },
+  modalTitle: {
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.bold,
+    color: colors.dark.text,
+    marginBottom: spacing[2],
+    textAlign: 'center',
+  },
+  modalDescription: {
+    fontSize: fontSize.sm,
+    color: colors.dark.textSecondary,
+    textAlign: 'center',
+    marginBottom: spacing[4],
+  },
+  errorBox: {
+    backgroundColor: colors.danger[500] + '20',
+    borderRadius: borderRadius.md,
+    padding: spacing[3],
+    marginBottom: spacing[4],
+    borderWidth: 1,
+    borderColor: colors.danger[500],
+    width: '100%',
+  },
+  errorBoxText: {
+    color: colors.danger[400],
+    fontSize: fontSize.sm,
+    textAlign: 'center',
+  },
+  modalInputGroup: {
+    width: '100%',
+    marginBottom: spacing[4],
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: spacing[3],
+    width: '100%',
+  },
+  modalButton: {
+    backgroundColor: colors.primary[500],
+    borderRadius: borderRadius.lg,
+    padding: spacing[4],
+    alignItems: 'center',
+    width: '100%',
+    marginTop: spacing[2],
+  },
+  modalButtonText: {
+    color: colors.white,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
+  modalCancelButton: {
+    flex: 1,
+    backgroundColor: colors.dark.border,
+    borderRadius: borderRadius.lg,
+    padding: spacing[4],
+    alignItems: 'center',
+  },
+  modalCancelButtonText: {
+    color: colors.dark.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.medium,
+  },
+  modalSubmitButton: {
+    flex: 1,
+    backgroundColor: colors.primary[500],
+    borderRadius: borderRadius.lg,
+    padding: spacing[4],
+    alignItems: 'center',
+  },
+  modalSubmitButtonText: {
+    color: colors.white,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
 });
-
